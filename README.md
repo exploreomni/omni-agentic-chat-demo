@@ -27,6 +27,7 @@ return text only by design. If it has been idle the first load takes ~1 minute t
    | `OMNI_API_KEY` | an **Organization** API key (not a PAT) |
    | `OMNI_MODEL_ID` | the model to query against |
    | `DEMO_PASSWORD` | what visitors type to get in |
+   | `OMNI_EMBED_SECRET` | optional — Embed secret from Admin → Embed, only if the "Link to this chat in Omni" should be a signed embed URL |
 
    `SECRET_KEY` is generated for you. Leave the three `OMNI_*` values blank to run in
    **mock mode** with fake data.
@@ -60,7 +61,7 @@ docker run --rm -p 7860:7860 --env-file .env omni-agent-demo
 | 1a. Upsert embed user | `POST /api/v1/embed/sso/generate-session` | `externalId` = email; groups / userAttributes / connectionRoles set here every call |
 | 1b. Resolve user id | `GET /api/scim/v2/embed/Users` | `filter=embedExternalId eq "<email>"` (then `userName`); paginated scan as fallback. Cached per email. |
 | 2. Ask | `POST /api/v1/ai/jobs?userId=…` → poll `GET /ai/jobs/{id}` → `GET …/result` | `conversationId` reused for follow-ups |
-| 2d. Open in Omni | `POST /api/v1/embed/sso/generate-url` | `contentPath` = path of the job's `omniChatUrl`; signed link shown under the answer |
+| 2d. Link to chat | `https://<instance>/chat?chat=<conversationId>` | Plain link under each answer. Optional: set `OMNI_EMBED_SECRET` to swap in a signed embed URL (`POST /embed/sso/generate-url`) for seatless embed users. |
 | 3. Chart | `GET /api/v1/ai/jobs/{id}/vis` | Image bytes, or `422` when the answer is a scalar (no chart — expected) |
 
 ## Security notes
