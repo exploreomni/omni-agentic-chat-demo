@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Omni Agentic API Demo</title>
+<style>
+  :root {
+    --amber: #b5860a;
+    --amber-dark: #8a660a;
+    --gold: #f2b705;
+    --cream: #fffaf0;
+    --card: #fffdf7;
+    --border: #ecd9a8;
+    --text: #3a2f0f;
+  }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--cream);
+    margin: 0;
+    padding: 0;
+    color: var(--text);
+  }
+  header {
+    background: var(--amber-dark);
+    color: white;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  .badge {
+    background: var(--gold);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .badge.live { background: #4a7c2f; color: white; }
+  main {
+    max-width: 720px;
+    margin: 24px auto;
+    padding: 0 16px;
+  }
+  .config {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #6b5a2e;
+  }
+  .config input {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    margin-left: 4px;
+    font-size: 13px;
+    background: white;
+    color: var(--text);
+  }
+  #chat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 320px;
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+  .msg { margin-bottom: 18px; }
+  .msg.user { text-align: right; }
+  .bubble {
+    display: inline-block;
+    padding: 10px 14px;
+    border-radius: 12px;
+    max-width: 85%;
+    text-align: left;
+    white-space: pre-wrap;
+  }
+  .msg.user .bubble { background: var(--amber); color: white; }
+  .msg.assistant .bubble { background: #fbf1d6; color: var(--text); border: 1px solid var(--border); }
+  .trace a { color: var(--amber-dark); }
+  .trace {
+    font-size: 11px;
+    color: #a3924f;
+    margin-top: 4px;
+    font-family: monospace;
+  }
+  .chart {
+    margin-top: 8px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 12px;
+    color: #6b5a2e;
+    background: #fdf6e3;
+  }
+  form {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  input[type=text] {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 14px;
+    background: var(--card);
+    color: var(--text);
+  }
+  button {
+    background: var(--amber-dark);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:hover:not(:disabled) { background: var(--amber); }
+  button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Omni Agentic API Demo</h1>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <span class="badge {{ 'live' if not mock_mode else '' }}">
+      {{ 'MOCK MODE' if mock_mode else 'LIVE' }}
+    </span>
+    {% if gate_enabled %}
+    <form method="post" action="/logout" style="margin:0;"><button type="submit" style="padding:4px 10px;font-size:12px;background:var(--amber);">Log out</button></form>
+    {% endif %}
+  </div>
+</header>
+<main>
+  <div class="config">
+    Embed user email:
+    <input type="text" id="email" value="{{ default_email }}" size="28" />
+    &nbsp; Name:
+    <input type="text" id="name" value="{{ default_name }}" size="16" />
+  </div>
+
+  <div id="chat"></div>
+
+  <form id="ask-form">
+    <input type="text" id="prompt" placeholder="Ask a question, e.g. What were total sales last quarter?" autocomplete="off" />
+    <button type="submit" id="send-btn">Ask</button>
+  </form>
+</main>
+
+<script>
+let conversationId = null;
+const chat = document.getElementById('chat');
+const form = document.getElementById('ask-form');
+const btn = document.getElementById('send-btn');
+
+function addMessage(role, html, traceHtml) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + role;
+  wrap.innerHTML = `<div class="bubble">${html}</div>` + (traceHtml || '');
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+  return wrap;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const promptInput = document.getElementById('prompt');
+  const prompt = promptInput.value.trim();
+  if (!prompt) return;
+
+  addMessage('user', escapeHtml(prompt));
+  promptInput.value = '';
+  btn.disabled = true;
+
+  const thinking = addMessage('assistant', 'Thinking…');
+
+  try {
+    const resp = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        email: document.getElementById('email').value,
+        name: document.getElementById('name').value,
+        conversation_id: conversationId,
+      }),
+    });
+    const data = await resp.json();
+
+    if (data.error) {
+      thinking.querySelector('.bubble').innerHTML =
+        `<strong>Error in ${escapeHtml(data.step)}:</strong><br/>${escapeHtml(data.detail)}`;
+      return;
+    }
+
+    conversationId = data.conversation_id;
+
+    let chartHtml = '';
+    if (data.image) {
+      if (data.image.status === 'mock') {
+        chartHtml = `<div class="chart" style="padding:0;"><img src="${data.image.image_url}" style="max-width:100%; border-radius:6px;" alt="mock chart" /></div>`;
+      } else if (data.image.status === 'ok' && data.image.data_url) {
+        chartHtml = `<div class="chart" style="padding:0;"><img src="${data.image.data_url}" style="max-width:100%; border-radius:6px;" /></div>`;
+      } else if (data.image.status === 'ok' && data.image.raw) {
+        chartHtml = `<div class="chart">vis response: <pre style="white-space:pre-wrap;">${escapeHtml(JSON.stringify(data.image.raw, null, 2))}</pre></div>`;
+      } else if (data.image.status === 'no_chart') {
+        chartHtml = `<div class="chart">${escapeHtml(data.image.note)}</div>`;
+      } else {
+        chartHtml = `<div class="chart">Image step: ${data.image.status} — ${data.image.note || ''}</div>`;
+      }
+    }
+
+    const openLink = data.open_in_omni
+      ? ` · <a href="${data.open_in_omni}" target="_blank" rel="noopener">Open in Omni ↗</a>` : '';
+    const traceHtml = `<div class="trace">userId=${data.embed_user_id} · conversationId=${data.conversation_id}${openLink}</div>`;
+    thinking.querySelector('.bubble').innerHTML = renderMarkdownish(data.message) + chartHtml;
+    thinking.insertAdjacentHTML('beforeend', traceHtml);
+  } catch (err) {
+    thinking.querySelector('.bubble').textContent = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// very light markdown-ish rendering: bold + line breaks, nothing fancier
+function renderMarkdownish(s) {
+  return escapeHtml(s)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br/>');
+}
+</script>
+</body>
+</html>
