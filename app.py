@@ -15,8 +15,8 @@ Config comes from environment variables (Render: service Environment tab):
     OMNI_EMBED_SECRET     Embed secret (Admin -> Embed). With it set, "Link to this chat
                           in Omni" is a signed SSO embed URL that logs the embed user in;
                           without it, a plain /chat?chat=<conversationId> link.
-    OMNI_EMBED_LOGIN_URL  optional override for the embed login URL
-                          (default: https://<host with .embed-omniapp.co>/embed/login)
+    OMNI_EMBED_LOGIN_URL  optional; only used if /embed/sso/generate-url is unavailable
+                          and the app has to sign the URL itself
 
 If any OMNI_* var is missing the app runs in MOCK MODE (fake answers, same code path).
 If DEMO_PASSWORD is missing the password gate is disabled (fine locally; don't do that publicly).
@@ -278,14 +278,40 @@ def signed_embed_url(content_path, email, name, **optional):
 def sso_url_for_chat(conversation_id, email, name):
     """Signed embed link that drops the embed user straight into this conversation,
     authenticated. Requires OMNI_EMBED_SECRET; otherwise returns None and the
-    caller falls back to the plain /chat?chat=<id> URL."""
+    caller falls back to the plain /chat?chat=<id> URL.
+
+    Primary: POST /embed/sso/generate-url — Omni signs the URL and puts it on the
+    right embed host, so the app doesn't need to know that host.
+    Fallback: sign locally (needs OMNI_EMBED_LOGIN_URL, or a host that follows the
+    .omniapp.co -> .embed-omniapp.co pattern)."""
     if MOCK_MODE:
         return "https://example.embed-omniapp.co/embed/login?mock=1"
     if not OMNI_EMBED_SECRET or not conversation_id:
         return None
     content_path = OMNI_CHAT_CONTENT_PATH.format(conversation_id=conversation_id)
+
+    body = {"contentPath": content_path, "externalId": email, "name": name, "secret": OMNI_EMBED_SECRET}
+    if OMNI_EMBED_CONNECTION_ROLES:
+        body["connectionRoles"] = OMNI_EMBED_CONNECTION_ROLES
+    log("2d. generate-url", f"POST {OMNI_BASE_URL}/embed/sso/generate-url contentPath={content_path}")
+    try:
+        resp = requests.post(f"{OMNI_BASE_URL}/embed/sso/generate-url",
+                             headers={"Content-Type": "application/json"}, json=body, timeout=15)
+        if resp.ok:
+            data = resp.json()
+            url = data if isinstance(data, str) else (data.get("url") or data.get("embedUrl") or data.get("signedUrl"))
+            if not url:
+                log("2d. generate-url", f"200 but no url field — response keys: {list(data) if isinstance(data, dict) else type(data)}")
+            else:
+                log("2d. generate-url", f"ok -> {url[:90]}...")
+                return url
+        else:
+            log("2d. generate-url", f"{resp.status_code}: {resp.text[:300]}")
+    except Exception as e:
+        log("2d. generate-url", f"failed: {e!r}")
+
     url = signed_embed_url(content_path, email, name, connectionRoles=OMNI_EMBED_CONNECTION_ROLES)
-    log("2d. signed embed url", f"contentPath={content_path} login={embed_login_url()}")
+    log("2d. signed locally", f"login={embed_login_url()} (set OMNI_EMBED_LOGIN_URL if this host is wrong)")
     return url
 
 
