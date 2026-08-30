@@ -12,20 +12,24 @@ Config comes from environment variables (Render: service Environment tab):
     OMNI_MODEL_ID   model to query against
     DEMO_PASSWORD   password visitors must enter before they can use the app
     SECRET_KEY      random string used to sign the login cookie
-    OMNI_EMBED_SECRET  optional. The "Link to this chat in Omni" is a plain
-                       /chat?chat=<conversationId> URL by default; set the Embed secret
-                       (Admin -> Embed) to swap in a signed embed URL for seatless users
+    OMNI_EMBED_SECRET     Embed secret (Admin -> Embed). With it set, "Link to this chat
+                          in Omni" is a signed SSO embed URL that logs the embed user in;
+                          without it, a plain /chat?chat=<conversationId> link.
+    OMNI_EMBED_LOGIN_URL  optional override for the embed login URL
+                          (default: https://<host with .embed-omniapp.co>/embed/login)
 
 If any OMNI_* var is missing the app runs in MOCK MODE (fake answers, same code path).
 If DEMO_PASSWORD is missing the password gate is disabled (fine locally; don't do that publicly).
 """
 
 import base64
+import hashlib
+import hmac
 import os
 import secrets
 import time
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -38,7 +42,9 @@ OMNI_API_KEY = os.environ.get("OMNI_API_KEY", "")
 OMNI_MODEL_ID = os.environ.get("OMNI_MODEL_ID", "")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "")
 OMNI_EMBED_SECRET = os.environ.get("OMNI_EMBED_SECRET", "")          # Admin -> Embed -> secret
+OMNI_EMBED_LOGIN_URL = os.environ.get("OMNI_EMBED_LOGIN_URL", "")    # e.g. https://<org>.embed-omniapp.co/embed/login
 OMNI_EMBED_CONNECTION_ROLES = os.environ.get("OMNI_EMBED_CONNECTION_ROLES", "")  # optional JSON, e.g. {"<conn-id>":"RESTRICTED_QUERIER"}
+OMNI_CHAT_CONTENT_PATH = os.environ.get("OMNI_CHAT_CONTENT_PATH", "/chat?chat={conversation_id}")
 DEFAULT_EMAIL = os.environ.get("DEFAULT_EMBED_EMAIL", "demo.user@example.com")
 DEFAULT_NAME = os.environ.get("DEFAULT_EMBED_NAME", "Demo User")
 
@@ -242,32 +248,45 @@ def ask_omni(prompt, embed_user_id, conversation_id=None):
     }
 
 
-def sso_url_for_chat(omni_chat_url, email, name):
-    """Turn omniChatUrl (https://<host>/chat/<conversationId>) into a signed link the
-    embed user can open. Uses POST /embed/sso/generate-url, which authenticates with
-    the Embed secret (Admin -> Embed) in the body — not the org API key. Tries the
-    conversation path first, then the standalone /chat agent path the docs document."""
-    if not omni_chat_url:
-        return None
-    if MOCK_MODE:
-        return "https://example.omniapp.co/embed/login?mock=1"
+def embed_login_url():
+    """The embed login endpoint lives on the embed host, which is separate from the
+    app host (omni.omniapp.co -> omni.embed-omniapp.co). Override with
+    OMNI_EMBED_LOGIN_URL if the instance's embed host doesn't follow that pattern."""
+    if OMNI_EMBED_LOGIN_URL:
+        return OMNI_EMBED_LOGIN_URL.rstrip("/")
+    host = urlparse(OMNI_BASE_URL).netloc
+    if ".omniapp.co" in host and ".embed-omniapp.co" not in host:
+        host = host.replace(".omniapp.co", ".embed-omniapp.co")
+    return f"https://{host}/embed/login"
 
-    chat_path = urlparse(omni_chat_url).path if omni_chat_url.startswith("http") else omni_chat_url
-    for path in dict.fromkeys([chat_path, "/chat"]):
-        body = {"contentPath": path, "externalId": email, "name": name, "secret": OMNI_EMBED_SECRET}
-        if OMNI_EMBED_CONNECTION_ROLES:
-            body["connectionRoles"] = OMNI_EMBED_CONNECTION_ROLES
-        log("2d. generate-url", f"POST {OMNI_BASE_URL}/embed/sso/generate-url contentPath={path}")
-        resp = requests.post(f"{OMNI_BASE_URL}/embed/sso/generate-url",
-                             headers={"Content-Type": "application/json"}, json=body, timeout=15)
-        if not resp.ok:
-            log("2d. generate-url", f"{resp.status_code}: {resp.text[:300]}")
-            continue
-        data = resp.json()
-        url = data if isinstance(data, str) else (data.get("url") or data.get("embedUrl") or data.get("signedUrl"))
-        log("2d. generate-url", f"ok -> {str(url)[:80]}...")
-        return url
-    return None
+
+def signed_embed_url(content_path, email, name, **optional):
+    """Standard-SSO 'magic URL' per docs.omni.co/embed/setup/standard-sso:
+    HMAC-SHA256(secret) over newline-joined [loginUrl, contentPath, externalId,
+    name, nonce] + optional params in alphabetical key order, base64url-encoded,
+    appended as ?signature=. No API call — the URL is signed locally."""
+    login_url = embed_login_url()
+    nonce = secrets.token_urlsafe(24)
+    optional = {k: v for k, v in optional.items() if v}
+    parts = [login_url, content_path, email, name, nonce] + [optional[k] for k in sorted(optional)]
+    data = "\n".join(parts).encode("utf-8")
+    sig = base64.urlsafe_b64encode(hmac.new(OMNI_EMBED_SECRET.encode("utf-8"), data, hashlib.sha256).digest()).decode("ascii").rstrip("=")
+    params = {"contentPath": content_path, "externalId": email, "name": name, "nonce": nonce, **optional, "signature": sig}
+    return f"{login_url}?{urlencode(params)}"
+
+
+def sso_url_for_chat(conversation_id, email, name):
+    """Signed embed link that drops the embed user straight into this conversation,
+    authenticated. Requires OMNI_EMBED_SECRET; otherwise returns None and the
+    caller falls back to the plain /chat?chat=<id> URL."""
+    if MOCK_MODE:
+        return "https://example.embed-omniapp.co/embed/login?mock=1"
+    if not OMNI_EMBED_SECRET or not conversation_id:
+        return None
+    content_path = OMNI_CHAT_CONTENT_PATH.format(conversation_id=conversation_id)
+    url = signed_embed_url(content_path, email, name, connectionRoles=OMNI_EMBED_CONNECTION_ROLES)
+    log("2d. signed embed url", f"contentPath={content_path} login={embed_login_url()}")
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -344,11 +363,10 @@ def ask():
     # anyone who can log in to the instance. If OMNI_EMBED_SECRET is set, swap in a
     # signed embed URL so a seatless embed user can open it too.
     open_in_omni = f"{OMNI_BASE_URL}/chat?chat={result['conversation_id']}" if result.get("conversation_id") and not MOCK_MODE else None
-    if OMNI_EMBED_SECRET:
-        try:
-            open_in_omni = sso_url_for_chat(result.get("omni_chat_url"), email, name) or open_in_omni
-        except Exception as e:
-            log("ERROR in step 2d", repr(e))
+    try:
+        open_in_omni = sso_url_for_chat(result.get("conversation_id"), email, name) or open_in_omni
+    except Exception as e:
+        log("ERROR in step 2d", repr(e))
 
     try:
         image = render_chart_image(result["job_id"])
