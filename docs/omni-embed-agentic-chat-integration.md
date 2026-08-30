@@ -1,9 +1,10 @@
-
 # Embedding Omni's Agentic API in an External Chat Interface
 
 **Goal:** pre-auth embed users, ask Omni AI a question on their behalf, and pull back an image of the resulting chart to render inline in a custom chat UI — with each user only ever seeing data they're permitted to see.
 
 Every endpoint and payload shape below has been run against a live instance (`omni.playground.exploreomni.dev`) through a small test app, not just read off the docs. Where the docs and the live API disagreed, this guide follows what the API actually does.
+
+**Live demo:** https://omni-agentic-chat-demo.onrender.com/ (password: `omni-agent123!`). Free-tier hosting, so allow ~1 minute for it to wake if it has been idle. Source: the repo this file lives in.
 
 ![Chart rendering inline in the demo app](./screenshots/01_hero_chart.png)
 
@@ -43,34 +44,35 @@ Use the corporate email as `externalId` — same pattern used for OmniHR/Zeals s
 
 ### 1b — Resolve the Omni user ID
 
-**Fast path — SCIM filter.** Try a filtered lookup first; if the instance honours it, this is one call and no pagination:
-
-```python
-def find_embed_user_by_filter(email):
-    resp = requests.get(
-        f"{OMNI_BASE_URL}/api/scim/v2/embed/Users",
-        headers=HEADERS,
-        params={"filter": f'userName eq "{email}"'},
-        timeout=15,
-    )
-    if not resp.ok:
-        return None  # filter not supported here — fall back to pagination below
-    for u in resp.json().get("Resources", []):
-        if email in (u.get("embedExternalId"), u.get("externalId"), u.get("userName")):
-            return u["id"]
-    return None
-```
-
-**Fallback — paginate.** This is the part that's easy to get wrong. The correct endpoint is the SCIM route, not `/api/v0/users/embed` (that path doesn't exist — confirmed via 404 against a real instance):
+The endpoint is the SCIM embed-users route, not `/api/v0/users/embed` (that path doesn't exist — 404 against a real instance):
 
 ```
 GET /api/scim/v2/embed/Users
 ```
 
-Two things that will bite you if you skip them:
+**Fast path — SCIM filter (one call).** Filter on `embedExternalId`, which is the field that carries the `externalId` you passed to generate-session. Filtering on `userName` is kept as a second attempt for instances that populate that field instead — on the playground instance `userName` did *not* match the email, so leading with it silently returns nothing and you end up paginating anyway.
 
-1. **It paginates.** A newly-created user won't necessarily be on the first page. Use `startIndex`/`count` and keep going until you find a match or exhaust `totalResults`.
-2. **Match on the right field.** The field that carries your `externalId` is `embedExternalId` (some instances also populate `externalId` or `userName` — check all three defensively).
+```python
+def find_embed_user_by_filter(email):
+    for field in ("embedExternalId", "userName"):
+        resp = requests.get(
+            f"{OMNI_BASE_URL}/api/scim/v2/embed/Users",
+            headers=HEADERS,
+            params={"filter": f'{field} eq "{email}"'},
+            timeout=15,
+        )
+        if not resp.ok:
+            return None  # filter not supported here — fall back to pagination
+        for u in resp.json().get("Resources", []):
+            if email in (u.get("embedExternalId"), u.get("externalId"), u.get("userName")):
+                return u["id"]
+    return None
+```
+
+**Fallback — paginate.** Keep this behind the filter for instances that ignore `filter=`. Two things that will bite you if you skip them:
+
+1. **It paginates.** A newly-created user won't necessarily be on the first page (on the playground instance the demo user was on page 2). Use `startIndex`/`count` and keep going until you find a match or exhaust `totalResults`.
+2. **Match on the right field.** Check `embedExternalId` first, then `externalId` and `userName` defensively.
 
 ```python
 def resolve_embed_user_id(email):
@@ -97,6 +99,8 @@ def resolve_embed_user_id(email):
 
     raise RuntimeError(f"No embed user found for {email}")
 ```
+
+Wire them together as `find_embed_user_by_filter(email) or resolve_embed_user_id(email)`. Log how many rows the filter returns the first time you run against a new instance: 1 row means filters work; a full page with `totalResults` equal to the whole user count means the instance ignores `filter=` and you should drop the attempt rather than pay for a wasted call on every cache miss.
 
 **If you need SCIM-based bulk provisioning instead** of the lazy upsert-on-first-session pattern (e.g. syncing from an IdP ahead of time): standard SCIM user creation also works —
 
@@ -282,6 +286,7 @@ Render markdown message [+ chart image] in chat UI
 ## Gotchas encountered building this
 
 - **`python-dotenv`'s `load_dotenv()` doesn't override existing shell environment variables by default.** If `OMNI_BASE_URL` or similar got exported in a terminal session at some point (e.g. from earlier ad-hoc testing against a different instance), it silently wins over `.env`. Use `load_dotenv(override=True)` to make the config file authoritative, and `echo $VAR_NAME` to check for stale shell exports if the app is hitting the wrong instance for no apparent reason.
+- **SCIM filter on `userName` returned nothing on the playground instance** — the email lives in `embedExternalId`. Filter on that first.
 - **SCIM embed user listing paginates** — don't assume a freshly-created user is on page one.
 - **The `/vis` endpoint's 422 is informative, not a bug** — build the "no chart for this answer" case into the UI from the start rather than treating it as an error path.
 - **Cache the embed-user resolution per session.** Re-running `generate-session` + a paginated SCIM lookup on every single message is the single biggest avoidable source of latency in this flow — the AI job's own `EXECUTING` time is real backend work and isn't something to optimize away, but the user-lookup overhead is.
