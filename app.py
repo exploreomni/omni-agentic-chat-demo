@@ -44,7 +44,22 @@ OMNI_MODEL_ID = os.environ.get("OMNI_MODEL_ID", "")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "")
 OMNI_EMBED_SECRET = os.environ.get("OMNI_EMBED_SECRET", "")          # Admin -> Embed -> secret
 OMNI_EMBED_LOGIN_URL = os.environ.get("OMNI_EMBED_LOGIN_URL", "")    # e.g. https://<org>.embed-omniapp.co/embed/login
-OMNI_EMBED_CONNECTION_ROLES = os.environ.get("OMNI_EMBED_CONNECTION_ROLES", "")  # optional JSON, e.g. {"<conn-id>":"RESTRICTED_QUERIER"}
+def _connection_roles_json(raw):
+    """Accept either JSON ({"<conn-id>":"RESTRICTED_QUERIER"}) or a bare connection
+    ID (-> RESTRICTED_QUERIER on that connection). Returns a compact JSON string or ""."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return json.dumps(parsed, separators=(",", ":"))
+    except ValueError:
+        pass
+    return json.dumps({raw: "RESTRICTED_QUERIER"}, separators=(",", ":"))
+
+
+OMNI_EMBED_CONNECTION_ROLES = _connection_roles_json(os.environ.get("OMNI_EMBED_CONNECTION_ROLES"))
 OMNI_CHAT_CONTENT_PATH = os.environ.get("OMNI_CHAT_CONTENT_PATH", "/chat?chat={conversation_id}")
 DEFAULT_EMAIL = os.environ.get("DEFAULT_EMBED_EMAIL", "demo.user@example.com")
 DEFAULT_NAME = os.environ.get("DEFAULT_EMBED_NAME", "Demo User")
