@@ -6,9 +6,7 @@ Every endpoint and payload shape below has been run against a live instance (`om
 
 **Live demo:** https://omni-agentic-chat-demo.onrender.com/ (password: `omni-agent123!`). Free-tier hosting, so allow ~1 minute for it to wake if it has been idle. Source: the repo this file lives in.
 
-![Chart rendering inline in the demo app](./screenshots/01_hero_chart.png)
 
-*A short screen recording of this end-to-end (question → wait → chart appearing) is worth linking here too — the wait between `EXECUTING` and the chart popping in is worth seeing in real time, not just reading about.*
 
 ---
 
