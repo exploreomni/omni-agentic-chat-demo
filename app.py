@@ -12,6 +12,9 @@ Config comes from environment variables (Render: service Environment tab):
     OMNI_MODEL_ID   model to query against
     DEMO_PASSWORD   password visitors must enter before they can use the app
     SECRET_KEY      random string used to sign the login cookie
+    OMNI_EMBED_SECRET  optional. The "Link to this chat in Omni" is a plain
+                       /chat?chat=<conversationId> URL by default; set the Embed secret
+                       (Admin -> Embed) to swap in a signed embed URL for seatless users
 
 If any OMNI_* var is missing the app runs in MOCK MODE (fake answers, same code path).
 If DEMO_PASSWORD is missing the password gate is disabled (fine locally; don't do that publicly).
@@ -34,6 +37,8 @@ OMNI_BASE_URL = os.environ.get("OMNI_BASE_URL", "").rstrip("/")
 OMNI_API_KEY = os.environ.get("OMNI_API_KEY", "")
 OMNI_MODEL_ID = os.environ.get("OMNI_MODEL_ID", "")
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "")
+OMNI_EMBED_SECRET = os.environ.get("OMNI_EMBED_SECRET", "")          # Admin -> Embed -> secret
+OMNI_EMBED_CONNECTION_ROLES = os.environ.get("OMNI_EMBED_CONNECTION_ROLES", "")  # optional JSON, e.g. {"<conn-id>":"RESTRICTED_QUERIER"}
 DEFAULT_EMAIL = os.environ.get("DEFAULT_EMBED_EMAIL", "demo.user@example.com")
 DEFAULT_NAME = os.environ.get("DEFAULT_EMBED_NAME", "Demo User")
 
@@ -225,6 +230,9 @@ def ask_omni(prompt, embed_user_id, conversation_id=None):
     # carries it varies, so check status, result and the create response.
     omni_chat_url = status.get("omniChatUrl") or result.get("omniChatUrl") or job.get("omniChatUrl")
     log("2c. result", f"omniChatUrl={omni_chat_url}")
+    if not omni_chat_url:
+        # Show exactly what came back so the field can be located.
+        log("2c. result", f"create keys={sorted(job)} status keys={sorted(status)} result keys={sorted(result)}")
     return {
         "message": result.get("message", ""),
         "conversation_id": job.get("conversationId"),
@@ -235,20 +243,31 @@ def ask_omni(prompt, embed_user_id, conversation_id=None):
 
 
 def sso_url_for_chat(omni_chat_url, email, name):
-    """Turn omniChatUrl into a link the embed user can actually open: use its
-    path as contentPath for POST /api/v1/embed/sso/generate-url, which returns
-    a signed URL that authenticates them client-side on the way in."""
+    """Turn omniChatUrl (https://<host>/chat/<conversationId>) into a signed link the
+    embed user can open. Uses POST /embed/sso/generate-url, which authenticates with
+    the Embed secret (Admin -> Embed) in the body — not the org API key. Tries the
+    conversation path first, then the standalone /chat agent path the docs document."""
     if not omni_chat_url:
         return None
     if MOCK_MODE:
         return "https://example.omniapp.co/embed/login?mock=1"
-    path = urlparse(omni_chat_url).path if omni_chat_url.startswith("http") else omni_chat_url
-    body = {"contentPath": path, "externalId": email, "name": name}
-    log("2d. generate-url", f"POST {OMNI_BASE_URL}/api/v1/embed/sso/generate-url contentPath={path}")
-    resp = requests.post(f"{OMNI_BASE_URL}/api/v1/embed/sso/generate-url", headers=HEADERS, json=body, timeout=15)
-    raise_with_body(resp)
-    data = resp.json()
-    return data.get("url") or data.get("embedUrl")
+
+    chat_path = urlparse(omni_chat_url).path if omni_chat_url.startswith("http") else omni_chat_url
+    for path in dict.fromkeys([chat_path, "/chat"]):
+        body = {"contentPath": path, "externalId": email, "name": name, "secret": OMNI_EMBED_SECRET}
+        if OMNI_EMBED_CONNECTION_ROLES:
+            body["connectionRoles"] = OMNI_EMBED_CONNECTION_ROLES
+        log("2d. generate-url", f"POST {OMNI_BASE_URL}/embed/sso/generate-url contentPath={path}")
+        resp = requests.post(f"{OMNI_BASE_URL}/embed/sso/generate-url",
+                             headers={"Content-Type": "application/json"}, json=body, timeout=15)
+        if not resp.ok:
+            log("2d. generate-url", f"{resp.status_code}: {resp.text[:300]}")
+            continue
+        data = resp.json()
+        url = data if isinstance(data, str) else (data.get("url") or data.get("embedUrl") or data.get("signedUrl"))
+        log("2d. generate-url", f"ok -> {str(url)[:80]}...")
+        return url
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -321,11 +340,15 @@ def ask():
         log("ERROR in step 2", repr(e))
         return jsonify({"error": True, "step": "ask_omni", "detail": str(e)}), 502
 
-    try:
-        open_in_omni = sso_url_for_chat(result.get("omni_chat_url"), email, name)
-    except Exception as e:
-        log("ERROR in step 2d", repr(e))
-        open_in_omni = None
+    # Link to the conversation in Omni. Default: the plain chat URL, which works for
+    # anyone who can log in to the instance. If OMNI_EMBED_SECRET is set, swap in a
+    # signed embed URL so a seatless embed user can open it too.
+    open_in_omni = f"{OMNI_BASE_URL}/chat?chat={result['conversation_id']}" if result.get("conversation_id") and not MOCK_MODE else None
+    if OMNI_EMBED_SECRET:
+        try:
+            open_in_omni = sso_url_for_chat(result.get("omni_chat_url"), email, name) or open_in_omni
+        except Exception as e:
+            log("ERROR in step 2d", repr(e))
 
     try:
         image = render_chart_image(result["job_id"])
