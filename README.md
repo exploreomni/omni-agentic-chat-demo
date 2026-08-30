@@ -8,11 +8,13 @@ Hosted for free on [Render](https://render.com) as a web service, deployed strai
 
 ## Try it
 
-**https://omni-agentic-chat-demo.onrender.com/** - password `omni-agent123!` (demo only).
+**https://omni-agentic-chat-demo.onrender.com/** — password `omni-agent123!` (demo only).
 
 It runs against the Omni playground instance. Ask a breakdown question ("revenue by
 week last quarter") to get a chart; scalar questions ("total revenue last quarter")
-return text only by design. If it has been idle the first load takes ~1 minute to wake.
+return text only by design. 
+
+If it has been idle the first load takes ~1 minute to wake.
 
 ## Deploy (one-time setup, ~5 minutes)
 
@@ -27,8 +29,8 @@ return text only by design. If it has been idle the first load takes ~1 minute t
    | `OMNI_API_KEY` | an **Organization** API key (not a PAT) |
    | `OMNI_MODEL_ID` | the model to query against |
    | `DEMO_PASSWORD` | what visitors type to get in |
-   | `OMNI_EMBED_SECRET` | Embed secret from Admin → Embed - makes "Link to this chat in Omni" a signed SSO embed URL |
-   | `OMNI_EMBED_LOGIN_URL` | embed login URL, e.g. `https://<org>.embed-omniapp.co/embed/login` (leave blank if your host follows the `.omniapp.co` → `.embed-omniapp.co` pattern) |
+   | `OMNI_EMBED_SECRET` | Embed secret from Admin → Embed — makes "Link to this chat in Omni" a signed SSO embed URL |
+   | `OMNI_EMBED_CONNECTION_ROLES` | `{"<connection-id>":"RESTRICTED_QUERIER"}` (or just the connection ID) — the embed user needs a role on the connection to open `/chat`; without it Omni shows "I can't answer questions for you" |
 
    `SECRET_KEY` is generated for you. Leave the three `OMNI_*` values blank to run in
    **mock mode** with fake data.
@@ -38,7 +40,7 @@ return text only by design. If it has been idle the first load takes ~1 minute t
 
 Free-tier behaviour worth knowing before a customer call: the service **sleeps after
 15 minutes idle and takes ~1 minute to wake**, so open the URL a few minutes before
-the demo. Free instances share 750 hours/month per workspace - plenty for one demo app.
+the demo. Free instances share 750 hours/month per workspace — plenty for one demo app.
 
 ## Run locally
 
@@ -62,13 +64,13 @@ docker run --rm -p 7860:7860 --env-file .env omni-agent-demo
 | 1a. Upsert embed user | `POST /api/v1/embed/sso/generate-session` | `externalId` = email; groups / userAttributes / connectionRoles set here every call |
 | 1b. Resolve user id | `GET /api/scim/v2/embed/Users` | `filter=embedExternalId eq "<email>"` (then `userName`); paginated scan as fallback. Cached per email. |
 | 2. Ask | `POST /api/v1/ai/jobs?userId=…` → poll `GET /ai/jobs/{id}` → `GET …/result` | `conversationId` reused for follow-ups |
-| 2d. Link to chat | signed `…/embed/login?contentPath=/chat?chat=<conversationId>&…&signature=` | Standard-SSO "magic URL", HMAC-signed locally with the Embed secret, so the embed user lands in the conversation already logged in. Falls back to a plain `/chat?chat=<id>` link if no secret is set. |
-| 3. Chart | `GET /api/v1/ai/jobs/{id}/vis` | Image bytes, or `422` when the answer is a scalar (no chart - expected) |
+| 2d. Link to chat | `POST /embed/sso/generate-url` → signed `…/embed/login?contentPath=/chat?chat=<id>&…&signature=` | Standard-SSO "magic URL": Omni signs it with the Embed secret and returns it on the embed host, so the embed user lands in the conversation already logged in. Falls back to a plain `/chat?chat=<id>` link if no secret is set. |
+| 3. Chart | `GET /api/v1/ai/jobs/{id}/vis` | Image bytes, or `422` when the answer is a scalar (no chart — expected) |
 
 ## Security notes
 
 - The Organization API key never leaves the server; the browser only talks to `/ask`.
-- The password gate is a single shared password - fine for demos, not for production.
+- The password gate is a single shared password — fine for demos, not for production.
   For anything real, replace it with your own auth and derive the embed user's email
   (and groups / user attributes) from that identity instead of the text box in the UI.
 - Anyone with the password can type any email into the embed-user box and query as
