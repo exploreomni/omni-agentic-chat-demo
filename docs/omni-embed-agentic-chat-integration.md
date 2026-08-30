@@ -132,7 +132,6 @@ def upsert_embed_user(email, name, groups=None, user_attributes=None, connection
 
 Your backend is the source of truth for "who is this person and what should they see" — from your own auth system, IdP claims, or app database. Omni just stores and enforces whatever you send. Pass the current values on every call rather than assuming they persist from creation; if you're provisioning via bulk SCIM instead, group/attribute assignment is a separate step there too (SCIM-created users default to plain Organization Member with no group memberships).
 
-![Config bar and terminal trace of generate-session + list-embed-users](./screenshots/02_step1_preauth.png)
 
 ### Caching the lookup
 
@@ -212,7 +211,6 @@ def sso_url_for_chat(omni_chat_url, email, name):
 
 Same `externalId` (and groups / userAttributes) as §1c so they land in Omni as the same embed user they asked the question as.
 
-![Terminal trace of create job through poll through result through vis](./screenshots/03_step2_ai_jobs_terminal.png)
 
 ---
 
@@ -247,7 +245,6 @@ Two behaviors confirmed live:
 - **Scalar answers** ("what was revenue last quarter") → `422 {"error": "Visualization type is not renderable as an image"}`. Treat this as a normal outcome, not a failure — just render the text answer with no image.
 - **Chart-shaped answers** ("revenue by week last quarter") → real image bytes back, renderable directly via a `data:` URL in an `<img>` tag.
 
-![Side by side: scalar answer with no chart vs. breakdown answer with chart](./screenshots/04_step3_scalar_vs_chart.png)
 
 ---
 
