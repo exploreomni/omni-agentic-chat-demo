@@ -192,24 +192,37 @@ def ask_omni(prompt, model_id, embed_user_id, conversation_id=None):
 
 Reuse `conversation_id` on the next call in the same thread for follow-ups ("break that down by region"). Typical `EXECUTING` polling takes anywhere from a few seconds to ~15-20s depending on query complexity — that latency is Omni doing real work against your warehouse, not something to optimize away in your client.
 
-### 2d — Save `omniChatUrl` and hand the user into Omni
+### 2d — Link back to the conversation in Omni
 
-When the job completes, save the `omniChatUrl` that comes back with it — that's the conversation's home inside Omni. To let the user open it, treat its path as the `contentPath` for the SSO embed flow of your choice, so they arrive authenticated client-side:
+The create-job response gives you `conversationId`, and the conversation lives at a predictable URL — this is all a "link to this chat in Omni" needs for anyone who can log in to the instance:
+
+```python
+open_in_omni = f"{OMNI_BASE_URL}/chat?chat={conversation_id}"
+```
+
+The create and status responses also carry `omniChatUrl` (`https://<host>/chat/<conversationId>`) if you'd rather not build it yourself.
+
+**If the viewer is a seatless embed user** they can't log in natively, so hand them in through SSO instead: use the chat path as the `contentPath` for a signed embed URL.
+
+**This uses a different auth than everything else in this guide.** `generate-session` (§1) takes the org API key as a bearer token. The signed-URL helper is `POST /embed/sso/generate-url` — no `/api/v1` prefix — and it wants the **Embed secret** (Admin → Embed) in the body, with no Authorization header. Calling `/api/v1/embed/sso/generate-url` with the API key does not work.
 
 ```python
 def sso_url_for_chat(omni_chat_url, email, name):
-    path = urlparse(omni_chat_url).path if omni_chat_url.startswith("http") else omni_chat_url
-    resp = requests.post(
-        f"{OMNI_BASE_URL}/api/v1/embed/sso/generate-url",
-        headers=HEADERS,
-        json={"contentPath": path, "externalId": email, "name": name},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()["url"]   # signed URL — render as "Open in Omni", or load in an iframe
+    path = urlparse(omni_chat_url).path            # "/chat/<conversationId>"
+    for content_path in (path, "/chat"):            # fall back to the standalone agent
+        resp = requests.post(
+            f"{OMNI_BASE_URL}/embed/sso/generate-url",
+            json={"contentPath": content_path, "externalId": email, "name": name,
+                  "secret": OMNI_EMBED_SECRET},
+            timeout=15,
+        )
+        if resp.ok:
+            data = resp.json()
+            return data if isinstance(data, str) else data.get("url")
+    return None
 ```
 
-Same `externalId` (and groups / userAttributes) as §1c so they land in Omni as the same embed user they asked the question as.
+Same `externalId` (and `userAttributes` / `connectionRoles`) as §1c so they land in Omni as the embed user they asked the question as. The docs note that embedding `/chat` requires `connectionRoles` for the embed user; if you set those in `generate-session` they already apply, otherwise pass them here too.
 
 
 ---
@@ -263,7 +276,7 @@ POST /api/v1/ai/jobs?userId=...                            (§2)
 Poll /api/v1/ai/jobs/{id} until COMPLETE
         │
         ▼
-GET .../result → markdown message + job_id (+ save omniChatUrl → generate-url for "Open in Omni")
+GET .../result → markdown message + job_id (+ link: /chat?chat=<conversationId>)
         │
         ▼
 GET .../jobs/{id}/vis                                       (§3)
@@ -276,4 +289,5 @@ GET .../jobs/{id}/vis                                       (§3)
 Render markdown message [+ chart image] in chat UI
 ```
 
----
+
+*Endpoints verified against a live instance via a working test app; sources for anything not directly tested: `docs.omni.co/guides/embed/ai-chat-agent`, `docs.omni.co/api/*`.*
