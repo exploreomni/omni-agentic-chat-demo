@@ -6,6 +6,14 @@ The full writeup of the API flow is in [`docs/omni-embed-agentic-chat-integratio
 
 Hosted for free on [Render](https://render.com) as a web service, deployed straight from GitHub.
 
+## Try it
+
+**https://omni-agentic-chat-demo.onrender.com/** — password `omni-agent123!` (demo only).
+
+It runs against the Omni playground instance. Ask a breakdown question ("revenue by
+week last quarter") to get a chart; scalar questions ("total revenue last quarter")
+return text only by design. If it has been idle the first load takes ~1 minute to wake.
+
 ## Deploy (one-time setup, ~5 minutes)
 
 1. Push this repo to GitHub.
@@ -50,7 +58,7 @@ docker run --rm -p 7860:7860 --env-file .env omni-agent-demo
 | Step | Endpoint | Notes |
 |---|---|---|
 | 1a. Upsert embed user | `POST /api/v1/embed/sso/generate-session` | `externalId` = email; groups / userAttributes / connectionRoles set here every call |
-| 1b. Resolve user id | `GET /api/scim/v2/embed/Users` | `filter=userName eq "<email>"` first; paginated scan as fallback. Cached per email. |
+| 1b. Resolve user id | `GET /api/scim/v2/embed/Users` | `filter=embedExternalId eq "<email>"` (then `userName`); paginated scan as fallback. Cached per email. |
 | 2. Ask | `POST /api/v1/ai/jobs?userId=…` → poll `GET /ai/jobs/{id}` → `GET …/result` | `conversationId` reused for follow-ups |
 | 2d. Open in Omni | `POST /api/v1/embed/sso/generate-url` | `contentPath` = path of the job's `omniChatUrl`; signed link shown under the answer |
 | 3. Chart | `GET /api/v1/ai/jobs/{id}/vis` | Image bytes, or `422` when the answer is a scalar (no chart — expected) |
