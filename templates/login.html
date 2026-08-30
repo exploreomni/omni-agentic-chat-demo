@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Omni Agentic API Demo — Sign in</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; background: #fffaf0; color: #3a2f0f; margin: 0;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: #fffdf7; border: 1px solid #ecd9a8; border-radius: 10px; padding: 28px 32px; width: 320px; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p { font-size: 13px; color: #6b5a2e; margin: 0 0 18px; }
+  input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid #ecd9a8; font-size: 14px; margin-bottom: 12px; }
+  button { width: 100%; background: #8a660a; color: white; border: none; padding: 10px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  button:hover { background: #b5860a; }
+  .err { color: #a33; font-size: 13px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+  <form class="card" method="post">
+    <h1>Omni Agentic API Demo</h1>
+    <p>This demo runs queries on a live Omni instance. Enter the demo password to continue.</p>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" />
+    <button type="submit">Enter</button>
+  </form>
+</body>
+</html>
