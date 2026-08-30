@@ -280,17 +280,3 @@ Render markdown message [+ chart image] in chat UI
 ```
 
 ---
-
-## Gotchas encountered building this
-
-- **`python-dotenv`'s `load_dotenv()` doesn't override existing shell environment variables by default.** If `OMNI_BASE_URL` or similar got exported in a terminal session at some point (e.g. from earlier ad-hoc testing against a different instance), it silently wins over `.env`. Use `load_dotenv(override=True)` to make the config file authoritative, and `echo $VAR_NAME` to check for stale shell exports if the app is hitting the wrong instance for no apparent reason.
-- **SCIM filter on `userName` returned nothing on the playground instance** — the email lives in `embedExternalId`. Filter on that first.
-- **SCIM embed user listing paginates** — don't assume a freshly-created user is on page one.
-- **The `/vis` endpoint's 422 is informative, not a bug** — build the "no chart for this answer" case into the UI from the start rather than treating it as an error path.
-- **Cache the embed-user resolution per session.** Re-running `generate-session` + a paginated SCIM lookup on every single message is the single biggest avoidable source of latency in this flow — the AI job's own `EXECUTING` time is real backend work and isn't something to optimize away, but the user-lookup overhead is.
-
-![Terminal showing a stray shell env var overriding .env and pointing at the wrong instance](./screenshots/05_gotcha_env_var.png)
-
----
-
-*Endpoints verified against a live instance via a working test app; sources for anything not directly tested: `docs.omni.co/guides/embed/ai-chat-agent`, `docs.omni.co/api/*`.*
