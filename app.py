@@ -25,6 +25,7 @@ If DEMO_PASSWORD is missing the password gate is disabled (fine locally; don't d
 import base64
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import time
@@ -115,7 +116,8 @@ def upsert_embed_user(email, name, groups=None, user_attributes=None, connection
     if user_attributes:
         body["userAttributes"] = user_attributes
     if connection_roles:
-        body["connectionRoles"] = connection_roles
+        # accept either a dict or the JSON string from the env var
+        body["connectionRoles"] = json.loads(connection_roles) if isinstance(connection_roles, str) else connection_roles
     log("1a. generate-session", f"POST {OMNI_BASE_URL}/api/v1/embed/sso/generate-session externalId={email}")
     resp = requests.post(f"{OMNI_BASE_URL}/api/v1/embed/sso/generate-session", headers=HEADERS, json=body, timeout=15)
     raise_with_body(resp)
@@ -177,7 +179,7 @@ def get_embed_user_id(email, name):
     if email in _EMBED_USER_CACHE:
         log("1. resolve embed user", f"cache hit for {email}")
         return _EMBED_USER_CACHE[email]
-    upsert_embed_user(email, name)
+    upsert_embed_user(email, name, connection_roles=OMNI_EMBED_CONNECTION_ROLES or None)
     user_id = find_embed_user_by_filter(email) or resolve_embed_user_id(email)
     log("1. resolve embed user", f"{email} -> {user_id}")
     _EMBED_USER_CACHE[email] = user_id
