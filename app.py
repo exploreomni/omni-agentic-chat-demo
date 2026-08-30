@@ -112,22 +112,25 @@ def upsert_embed_user(email, name, groups=None, user_attributes=None, connection
 
 
 def find_embed_user_by_filter(email):
-    """1b (fast path). GET /api/scim/v2/embed/Users?filter=userName eq "<email>"
-    Single call, no pagination. Returns the user id or None if the filter
-    isn't honoured / nothing matches, so the caller can fall back to paging."""
-    log("1b. scim filter", f'GET {OMNI_BASE_URL}/api/scim/v2/embed/Users filter=userName eq "{email}"')
-    resp = requests.get(
-        f"{OMNI_BASE_URL}/api/scim/v2/embed/Users",
-        headers=HEADERS,
-        params={"filter": f'userName eq "{email}"'},
-        timeout=15,
-    )
-    if not resp.ok:
-        log("1b. scim filter", f"{resp.status_code} — filter not supported here, falling back to pagination")
-        return None
-    for u in resp.json().get("Resources", []):
-        if email in (u.get("embedExternalId"), u.get("externalId"), u.get("userName")):
-            return u["id"]
+    """1b (fast path). SCIM filter lookup — one call, no pagination, if the
+    instance honours filters. Returns the user id or None."""
+    for field in ("embedExternalId", "userName"):
+        log("1b. scim filter", f'GET {OMNI_BASE_URL}/api/scim/v2/embed/Users filter={field} eq "{email}"')
+        resp = requests.get(
+            f"{OMNI_BASE_URL}/api/scim/v2/embed/Users",
+            headers=HEADERS,
+            params={"filter": f'{field} eq "{email}"'},
+            timeout=15,
+        )
+        if not resp.ok:
+            log("1b. scim filter", f"{resp.status_code} — filter not supported, falling back to pagination")
+            return None
+        payload = resp.json()
+        users = payload.get("Resources", [])
+        log("1b. scim filter", f"{field}: {len(users)} rows back (totalResults={payload.get('totalResults')})")
+        for u in users:
+            if email in (u.get("embedExternalId"), u.get("externalId"), u.get("userName")):
+                return u["id"]
     return None
 
 
