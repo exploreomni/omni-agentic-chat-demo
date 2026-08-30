@@ -82,7 +82,10 @@
   }
   .msg.user .bubble { background: var(--amber); color: white; }
   .msg.assistant .bubble { background: #fbf1d6; color: var(--text); border: 1px solid var(--border); }
-  .trace a { color: var(--amber-dark); }
+  .trace a.omni-link { color: var(--amber-dark); font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-decoration: none; }
+  .trace a.omni-link:hover { text-decoration: underline; }
+  .trace details { display: inline-block; margin-left: 8px; }
+  .trace summary { cursor: pointer; color: #a3924f; }
   .trace {
     font-size: 11px;
     color: #a3924f;
@@ -216,9 +219,11 @@ form.addEventListener('submit', async (e) => {
       }
     }
 
-    const openLink = data.open_in_omni
-      ? ` · <a href="${data.open_in_omni}" target="_blank" rel="noopener">Open in Omni ↗</a>` : '';
-    const traceHtml = `<div class="trace">userId=${data.embed_user_id} · conversationId=${data.conversation_id}${openLink}</div>`;
+    const trace = `userId=${data.embed_user_id} · conversationId=${data.conversation_id}`;
+    const traceHtml = data.open_in_omni
+      ? `<div class="trace"><a class="omni-link" href="${data.open_in_omni}" target="_blank" rel="noopener">Link to this chat in Omni ↗</a>` +
+        `<details><summary>details</summary>${trace}</details></div>`
+      : `<div class="trace"><details><summary>details</summary>${trace}</details></div>`;
     thinking.querySelector('.bubble').innerHTML = renderMarkdownish(data.message) + chartHtml;
     thinking.insertAdjacentHTML('beforeend', traceHtml);
   } catch (err) {
