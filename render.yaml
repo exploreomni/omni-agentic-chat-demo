@@ -1,0 +1,29 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# In Render: New -> Blueprint -> pick this GitHub repo. Then fill in the
+# secrets it prompts for (sync: false ones) before the first deploy.
+services:
+  - type: web
+    name: omni-agentic-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # One worker keeps the in-memory embed-user cache shared across requests.
+    startCommand: gunicorn -w 1 --threads 8 --timeout 120 -b 0.0.0.0:$PORT app:app
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: OMNI_BASE_URL
+        sync: false
+      - key: OMNI_API_KEY
+        sync: false
+      - key: OMNI_MODEL_ID
+        sync: false
+      - key: DEMO_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEFAULT_EMBED_EMAIL
+        value: demo.user@example.com
+      - key: DEFAULT_EMBED_NAME
+        value: Demo User
