@@ -2,7 +2,7 @@
 
 **Goal:** pre-auth embed users, ask Omni AI a question on their behalf, and pull back an image of the resulting chart to render inline in a custom chat UI — with each user only ever seeing data they're permitted to see.
 
-Every endpoint and payload shape below has been run against a live instance (`omni.playground.exploreomni.dev`) through a small test app, not just read off the docs. Where the docs and the live API disagreed, this guide follows what the API actually does.
+The original endpoint flows and API payloads were tested against a live instance (`omni.playground.exploreomni.dev`) through a small test app. Where the docs and the live API disagreed, this guide follows that observed behavior. The updated v1 local signer in §2d was verified offline against the official embed SDK versions 1.1.0 and 1.3.0; it has not been tested in a live login.
 
 **Live demo:** https://omni-agentic-chat-demo.onrender.com/ (password: `omni-agent123!`). Free-tier hosting, so allow ~1 minute for it to wake if it has been idle. Source: the repo this file lives in.
 
@@ -192,39 +192,48 @@ Reuse `conversation_id` on the next call in the same thread for follow-ups ("bre
 
 ### 2d — Hand the user into the conversation in Omni (signed embed URL)
 
-The create-job response gives you `conversationId`; the conversation lives at `/chat?chat=<conversationId>` inside Omni. To let an embed user open it *authenticated*, don't link there directly — build a standard-SSO "magic URL" with that as the `contentPath`. The recipe (docs.omni.co/embed/setup/standard-sso) is deterministic and needs no API call:
+The create-job response gives you `conversationId`; the conversation lives at `/chat?chat=<conversationId>` inside Omni. To let an embed user open it *authenticated*, build a v1 standard-SSO URL with that as the `contentPath`. The app first calls `POST /embed/sso/generate-url`; if that fails or returns no URL, it signs locally using this format:
 
 ```python
-import base64, hashlib, hmac, secrets
+import base64, hashlib, hmac, json, secrets, time, zlib
 from urllib.parse import urlencode
 
 def signed_embed_url(login_url, secret, content_path, external_id, name, **optional):
-    nonce = secrets.token_urlsafe(24)
-    optional = {k: v for k, v in optional.items() if v}
-    parts = [login_url, content_path, external_id, name, nonce] + [optional[k] for k in sorted(optional)]
-    sig = base64.urlsafe_b64encode(
-        hmac.new(secret.encode(), "\n".join(parts).encode(), hashlib.sha256).digest()
-    ).decode().rstrip("=")
-    return f"{login_url}?{urlencode({'contentPath': content_path, 'externalId': external_id, 'name': name, 'nonce': nonce, **optional, 'signature': sig})}"
+    params = {
+        **{k: v for k, v in optional.items() if v is not None and v != ""},
+        "loginUrl": login_url,
+        "contentPath": content_path,
+        "externalId": external_id,
+        "name": name,
+        "nonce": secrets.token_urlsafe(24),
+        "exp": int(time.time()) + 24 * 60 * 60,
+    }
+    data = json.dumps(params, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    compressed = compressor.compress(data) + compressor.flush()
+    payload = base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
+    digest = hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"{login_url}?{urlencode({'payload': payload, 'signature': signature})}"
 
 link = signed_embed_url(
     "https://<org>.embed-omniapp.co/embed/login",   # embed host, not the app host
     OMNI_EMBED_SECRET,                               # Admin -> Embed
     f"/chat?chat={conversation_id}",
     email, name,
-    connectionRoles=CONNECTION_ROLES_JSON,           # docs: required for /chat embeds
+    connectionRoles=json.loads(CONNECTION_ROLES_JSON),  # A JSON object in v1.
 )
 ```
 
 Three things that matter here:
 
-- **Signature order.** Login URL first, then `contentPath`, `externalId`, `name`, `nonce`, then any optional params in alphabetical key order, joined by single newlines, HMAC-SHA256 with the Embed secret, base64url without padding. Get the order wrong and the login page rejects it with an invalid-signature error.
+- **Sign the encoded payload.** Serialize the claims as UTF-8 JSON, compress with raw DEFLATE, and base64url-encode. HMAC-SHA256 signs that encoded string. The URL carries only `payload` and `signature`; optional objects, arrays, and booleans stay native JSON values inside the payload. Each URL has a fresh nonce and expires after 24 hours.
 - **Embed host, not app host.** The login URL is on the `.embed-omniapp.co` host (e.g. `omni.omniapp.co` → `omni.embed-omniapp.co`). It's a separate registrable domain so the embed session cookie stays isolated from a native session. Check what your instance's embed host is before assuming the pattern.
 - **Same identity as §1.** `externalId` must be the same email you passed to `generate-session`, and (per the AI-chat embed docs) `/chat` embeds need `connectionRoles` — pass the same ones you set in §1c so the user opens the conversation with the permissions they asked the question under.
 
 The Embed secret is a different credential from the org API key — `generate-session` (§1) uses the API key as a bearer token, the signed URL uses the secret. Keep both server-side.
 
-If you'd rather not sign yourself, `POST https://<host>/embed/sso/generate-url` with `{contentPath, externalId, name, secret}` returns a signed URL; the response body shape isn't documented, so log it the first time.
+The primary `POST https://<host>/embed/sso/generate-url` call sends `{contentPath, externalId, name, secret}` plus configured connection roles and lets Omni create the signed URL. The local fallback uses the same identity and permissions. Keep returned signed URLs out of logs.
 
 
 ---
