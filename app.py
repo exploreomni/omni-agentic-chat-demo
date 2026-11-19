@@ -30,6 +30,7 @@ import os
 import secrets
 import time
 import uuid
+import zlib
 from urllib.parse import urlencode, urlparse
 
 import requests
@@ -278,18 +279,25 @@ def embed_login_url():
 
 
 def signed_embed_url(content_path, email, name, **optional):
-    """Standard-SSO 'magic URL' per docs.omni.co/embed/setup/standard-sso:
-    HMAC-SHA256(secret) over newline-joined [loginUrl, contentPath, externalId,
-    name, nonce] + optional params in alphabetical key order, base64url-encoded,
-    appended as ?signature=. No API call — the URL is signed locally."""
+    """Sign a v1 Standard-SSO payload locally, valid for 24 hours.
+    Optional parameters use native JSON values (objects, arrays, booleans)."""
     login_url = embed_login_url()
-    nonce = secrets.token_urlsafe(24)
-    optional = {k: v for k, v in optional.items() if v}
-    parts = [login_url, content_path, email, name, nonce] + [optional[k] for k in sorted(optional)]
-    data = "\n".join(parts).encode("utf-8")
-    sig = base64.urlsafe_b64encode(hmac.new(OMNI_EMBED_SECRET.encode("utf-8"), data, hashlib.sha256).digest()).decode("ascii").rstrip("=")
-    params = {"contentPath": content_path, "externalId": email, "name": name, "nonce": nonce, **optional, "signature": sig}
-    return f"{login_url}?{urlencode(params)}"
+    params = {
+        **{k: v for k, v in optional.items() if v is not None and v != ""},
+        "loginUrl": login_url,
+        "contentPath": content_path,
+        "externalId": email,
+        "name": name,
+        "nonce": secrets.token_urlsafe(24),
+        "exp": int(time.time()) + 24 * 60 * 60,
+    }
+    data = json.dumps(params, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)  # Raw DEFLATE, without a zlib header.
+    compressed = compressor.compress(data) + compressor.flush()
+    payload = base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
+    digest = hmac.new(OMNI_EMBED_SECRET.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"{login_url}?{urlencode({'payload': payload, 'signature': signature})}"
 
 
 def sso_url_for_chat(conversation_id, email, name):
@@ -327,7 +335,8 @@ def sso_url_for_chat(conversation_id, email, name):
     except Exception as e:
         log("2d. generate-url", f"failed: {e!r}")
 
-    url = signed_embed_url(content_path, email, name, connectionRoles=OMNI_EMBED_CONNECTION_ROLES)
+    connection_roles = json.loads(OMNI_EMBED_CONNECTION_ROLES) if OMNI_EMBED_CONNECTION_ROLES else None
+    url = signed_embed_url(content_path, email, name, connectionRoles=connection_roles)
     log("2d. signed locally", f"login={embed_login_url()} (set OMNI_EMBED_LOGIN_URL if this host is wrong)")
     return url
 

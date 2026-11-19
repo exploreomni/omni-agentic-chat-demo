@@ -64,8 +64,14 @@ docker run --rm -p 7860:7860 --env-file .env omni-agent-demo
 | 1a. Upsert embed user | `POST /api/v1/embed/sso/generate-session` | `externalId` = email; groups / userAttributes / connectionRoles set here every call |
 | 1b. Resolve user id | `GET /api/scim/v2/embed/Users` | `filter=embedExternalId eq "<email>"` (then `userName`); paginated scan as fallback. Cached per email. |
 | 2. Ask | `POST /api/v1/ai/jobs?userId=…` → poll `GET /ai/jobs/{id}` → `GET …/result` | `conversationId` reused for follow-ups |
-| 2d. Link to chat | `POST /embed/sso/generate-url` → signed `…/embed/login?contentPath=/chat?chat=<id>&…&signature=` | Standard-SSO "magic URL": Omni signs it with the Embed secret and returns it on the embed host, so the embed user lands in the conversation already logged in. Falls back to a plain `/chat?chat=<id>` link if no secret is set. |
+| 2d. Link to chat | `POST /embed/sso/generate-url` → signed `…/embed/login?payload=…&signature=…` | Omni signs the v1 URL on the embed host. If the API is unavailable, the app signs a v1 payload locally with a fresh nonce and a 24-hour expiry. Without an embed secret, it uses a plain `/chat?chat=<id>` link. |
 | 3. Chart | `GET /api/v1/ai/jobs/{id}/vis` | Image bytes, or `422` when the answer is a scalar (no chart — expected) |
+
+## Tests
+
+After installing `requirements.txt`, run `python -m unittest -v test_embed_signatures`.
+The tests use synthetic configuration and mocked HTTP calls; they do not load `.env`
+or contact Omni.
 
 ## Security notes
 
